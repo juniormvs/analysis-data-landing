@@ -1,0 +1,125 @@
+# ==================== PYTHON ====================
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Python environments
+venv/
+ENV/
+env/
+.venv/
+env.bak/
+venv.bak/
+
+# Django
+*.sqlite3
+db.sqlite3
+/media/
+/staticfiles/
+.env
+.env.*
+!.env.example  # Manter o template de exemplo
+!.env.local.example  # Manter template para configurações locais
+
+# Testing & coverage
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.tox/
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# Type checking
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# ==================== NODE.JS / REACT ====================
+node_modules/
+/dist/
+/.cache/
+.pnpm-debug.log*
+
+# npm/yarn/pnpm
+npm-debug.log*
+npm-error.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+*.pnp
+.pnp.js
+
+# Build output (React)
+/build/
+/.next/  # Caso use Next.js no futuro
+
+# Environment files
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+!.env.local.example  # Manter template
+
+# ==================== IDE & EDITORS ====================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+
+# ==================== DOCKER ====================
+docker-compose.override.yml
+.docker/
+
+# ==================== OS & SYSTEM ====================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Thumbs.db.md5
+desktop.ini
+
+# ==================== LOGS ====================
+*.log
+*.log*
+*.pid
+
+# ==================== DATABASE (PostgreSQL) ====================
+# Ignorar backups ou arquivos temporários do PostgreSQL
+*.dump
+*.sql
+*.backup
