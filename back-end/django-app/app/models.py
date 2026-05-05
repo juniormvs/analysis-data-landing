@@ -24,7 +24,9 @@ class Servico(models.Model):
     
 class UsuarioServico(models.Model):
     usuario = models.ForeignKey(User, on_delete=models.CASCADE)
+    # ForeignKey para User
     servico = models.ForeignKey(Servico, on_delete=models.CASCADE)
+    # ForeignKey para Servico
     data_contratacao = models.DateTimeField(auto_now_add=True)
     data_expiracao = models.DateTimeField(null=True, blank=True)
     ativo = models.BooleanField(default=True)

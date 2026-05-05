@@ -44,15 +44,10 @@ class UsuarioServicoSerializer(serializers.ModelSerializer):
         help_text="ID do serviço a ser associado ao usuário."
     )
 
-    # Campo para leitura: retorna o ID do usuário (definido automaticamente na view)
-    usuario = serializers.IntegerField(
-        read_only=True,
-        help_text="ID do usuário (definido automaticamente pelo sistema)."
-    )
-
     class Meta:
         model = UsuarioServico
-        fields = ['id', 'usuario', 'servico', 'servico_id', 'data_contratacao', 'data_expiracao', 'ativo']
+        fields = ['id', 'usuario_id', 'servico', 'servico_id', 'data_contratacao', 'data_expiracao', 'ativo']
+        read_only_fields = ['id', 'usuario_id', 'data_contratacao']
 
     def create(self, validated_data):
         """
