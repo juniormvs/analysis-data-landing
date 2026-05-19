@@ -1,7 +1,5 @@
 from django.contrib import admin
-from .models import Cliente, Servico, UsuarioServico
-
-admin.site.register(Cliente)
+from .models import Servico, UsuarioServico
 
 @admin.register(Servico)
 class ServicoAdmin(admin.ModelAdmin):
