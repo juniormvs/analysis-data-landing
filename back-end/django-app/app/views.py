@@ -210,7 +210,7 @@ class ServicoListCreateView(generics.ListCreateAPIView):
     """
     queryset = Servico.objects.all()
     serializer_class = ServicoSerializer
-    permission_classes = [permissions.IsAdminUser]  # Somente admin pode criar serviços
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]  # Somente autenticado ou leitura
 
     def get_serializer_context(self):
         """
