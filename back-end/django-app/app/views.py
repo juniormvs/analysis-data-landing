@@ -1,13 +1,21 @@
+# =============================================
+# VIEWS DO DJANGO REST FRAMEWORK
+# =============================================
+# Define as views (endpoints) da API para:
+# - Autenticação (registro e login).
+# - Serviços (listar, criar, editar, deletar).
+# - Usuário-Serviço (contratar, listar, gerenciar serviços do usuário).
+# =============================================
+
 from rest_framework import generics, permissions, status
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework.views import APIView
-from rest_framework.throttling import UserRateThrottle  # Import para limitar requisições
+from rest_framework.throttling import UserRateThrottle  # Limita requisições para evitar abuso
 
-from .models import Cliente, Servico, UsuarioServico
+from .models import Servico, UsuarioServico
 from .serializers import (
-    ClienteSerializer,
     UserRegisterSerializer,
     UserLoginSerializer,
     ServicoSerializer,
@@ -21,7 +29,7 @@ from .serializers import (
 @api_view(['GET'])
 def api_root(request):
     """
-    Endpoint raiz da API.
+    Endpoint raiz da API para verificar se o servidor está funcionando.
     ---
     # Swagger/DRF-YASG Documentation
     responses:
@@ -35,33 +43,6 @@ def api_root(request):
     return Response({"message": "API do Django funcionando!"})
 
 # =============================================
-# VIEWS DE CLIENTE
-# =============================================
-
-class ClienteListCreate(generics.ListCreateAPIView):
-    """
-    View para listar e criar clientes.
-    ---
-    # Swagger/DRF-YASG Documentation
-    get:
-      summary: Lista todos os clientes.
-      description: Retorna uma lista de todos os clientes cadastrados.
-      responses:
-        200:
-          description: Lista de clientes retornada com sucesso.
-
-    post:
-      summary: Cria um novo cliente.
-      description: Cria um novo cliente com os dados fornecidos.
-      responses:
-        201:
-          description: Cliente criado com sucesso.
-    """
-    queryset = Cliente.objects.all()
-    serializer_class = ClienteSerializer
-    permission_classes = [permissions.IsAuthenticated]  # Apenas usuários autenticados
-
-# =============================================
 # VIEWS DE AUTENTICAÇÃO (REGISTRO E LOGIN)
 # =============================================
 
@@ -72,7 +53,9 @@ class UserRegisterView(generics.CreateAPIView):
     # Swagger/DRF-YASG Documentation
     post:
       summary: Registra um novo usuário.
-      description: Cria um novo usuário com email, senha, primeiro nome e sobrenome.
+      description: |
+        Cria um novo usuário com email, senha, primeiro nome e sobrenome.
+        O email é usado como username para autenticação.
       requestBody:
         required: true
         content:
@@ -91,6 +74,8 @@ class UserRegisterView(generics.CreateAPIView):
               },
               "message": "Usuário criado com sucesso!"
             }
+        400:
+          description: Dados inválidos (ex.: senhas não coincidem).
     """
     serializer_class = UserRegisterSerializer
     permission_classes = [permissions.AllowAny]  # Permite acesso sem autenticação
@@ -99,7 +84,9 @@ class UserRegisterView(generics.CreateAPIView):
     def get_serializer_context(self):
         """
         Adiciona o request ao contexto do serializer.
-        Útil para serializers que precisam de informações do request (ex.: IP, headers).
+        ---
+        # Por que?
+        - O serializer pode precisar de informações do request (ex.: IP, headers).
         """
         context = super().get_serializer_context()
         context['request'] = self.request
@@ -108,6 +95,11 @@ class UserRegisterView(generics.CreateAPIView):
     def create(self, request, *args, **kwargs):
         """
         Cria um novo usuário e retorna os dados do usuário criado.
+        ---
+        # Fluxo:
+        1. Valida os dados da requisição.
+        2. Cria o usuário no banco de dados.
+        3. Retorna os dados do usuário (sem a senha).
         """
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -128,7 +120,9 @@ class UserLoginView(APIView):
     # Swagger/DRF-YASG Documentation
     post:
       summary: Faz login e retorna tokens JWT.
-      description: Autentica o usuário e retorna tokens de acesso e refresh.
+      description: |
+        Autentica o usuário e retorna tokens de acesso (access) e refresh.
+        O email é usado como username para autenticação.
       requestBody:
         required: true
         content:
@@ -145,7 +139,8 @@ class UserLoginView(APIView):
               "user": {
                 "id": 1,
                 "email": "usuario@example.com",
-                "nome": "Fulano Silva"
+                "nome": "Fulano Silva",
+                "is_admin": false
               }
             }
         400:
@@ -165,6 +160,11 @@ class UserLoginView(APIView):
     def post(self, request):
         """
         Autentica o usuário e retorna tokens JWT.
+        ---
+        # Fluxo:
+        1. Valida as credenciais (email e senha).
+        2. Gera tokens JWT (access e refresh).
+        3. Retorna os tokens e os dados do usuário (sem a senha).
         """
         serializer = UserLoginSerializer(
             data=request.data,
@@ -172,7 +172,12 @@ class UserLoginView(APIView):
         )
         serializer.is_valid(raise_exception=True)
         user = serializer.validated_data['user']
+
+        # Gera os tokens JWT
         refresh = RefreshToken.for_user(user)
+        # Adiciona o campo is_admin ao token (para uso no frontend)
+        refresh['is_admin'] = user.is_admin
+
         return Response({
             "refresh": str(refresh),
             "access": str(refresh.access_token),
@@ -180,53 +185,79 @@ class UserLoginView(APIView):
                 "id": user.id,
                 "email": user.email,
                 "nome": f"{user.first_name} {user.last_name}",
+                "is_admin": user.is_admin,  # Inclui o campo is_admin
             },
         })
 
 # =============================================
-# VIEWS DE SERVIÇO (ADMIN)
+# VIEWS DE SERVIÇO (PÚBLICAS E ADMIN)
 # =============================================
 
 class ServicoListCreateView(generics.ListCreateAPIView):
     """
-    View para listar e criar serviços (apenas admin).
+    View para listar e criar serviços.
     ---
     # Swagger/DRF-YASG Documentation
     get:
       summary: Lista todos os serviços.
-      description: Retorna uma lista de todos os serviços cadastrados.
+      description: |
+        Retorna uma lista de todos os serviços **ativos** (para clientes).
+        Admins veem **todos os serviços** (ativos e inativos).
       responses:
         200:
           description: Lista de serviços retornada com sucesso.
+          examples:
+            [
+              {
+                "id": 1,
+                "nome": "Análise de Dados",
+                "descricao": "Serviço de análise de dados avançada.",
+                "preco": "100.00",
+                "ativo": true
+              }
+            ]
 
     post:
       summary: Cria um novo serviço.
-      description: Cria um novo serviço (apenas admin).
+      description: |
+        Cria um novo serviço no sistema.
+        **Apenas admins podem criar serviços.**
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ServicoSerializer'
       responses:
         201:
           description: Serviço criado com sucesso.
         403:
-          description: Permissão negada (apenas admin).
+          description: Permissão negada (apenas admins).
     """
-    queryset = Servico.objects.all()
     serializer_class = ServicoSerializer
-    permission_classes = [permissions.IsAdminUser]  # Somente admin pode criar serviços
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]  # Público para GET, autenticado para POST
 
-    def get_serializer_context(self):
+    def get_queryset(self):
         """
-        Adiciona o request ao contexto do serializer.
+        Filtra os serviços com base no usuário:
+        - Admins: Veem todos os serviços (ativos e inativos).
+        - Clientes: Veem apenas serviços ativos.
         """
-        context = super().get_serializer_context()
-        context['request'] = self.request
-        return context
+        if self.request.user.is_authenticated and self.request.user.is_admin:
+            return Servico.objects.all()  # Admins veem todos
+        return Servico.objects.filter(ativo=True)  # Clientes veem apenas ativos
 
 class ServicoRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
     """
-    View para recuperar, atualizar e deletar serviços (apenas admin).
+    View para recuperar, atualizar e deletar serviços.
     ---
     # Swagger/DRF-YASG Documentation
     get:
       summary: Recupera um serviço pelo ID.
+      description: |
+        Retorna os detalhes de um serviço específico.
+        **Qualquer usuário pode ver um serviço ativo.**
+        **Admins podem ver qualquer serviço (ativo ou inativo).**
       responses:
         200:
           description: Serviço encontrado.
@@ -235,43 +266,67 @@ class ServicoRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
 
     put:
       summary: Atualiza um serviço.
+      description: **Apenas admins podem atualizar serviços.**
       responses:
         200:
           description: Serviço atualizado com sucesso.
         403:
-          description: Permissão negada (apenas admin).
+          description: Permissão negada (apenas admins).
 
     delete:
       summary: Deleta um serviço.
+      description: **Apenas admins podem deletar serviços.**
       responses:
         204:
           description: Serviço deletado com sucesso.
         403:
-          description: Permissão negada (apenas admin).
+          description: Permissão negada (apenas admins).
     """
     queryset = Servico.objects.all()
     serializer_class = ServicoSerializer
-    permission_classes = [permissions.IsAdminUser]  # Somente admin pode editar/deletar
+    permission_classes = [permissions.IsAdminUser]  # Somente admins podem editar/deletar
 
 # =============================================
-# VIEWS DE USUÁRIO-SERVIÇO (RELAÇÃO)
+# VIEWS DE USUÁRIO-SERVIÇO (CLIENTES)
 # =============================================
 
 class UsuarioServicoListCreateView(generics.ListCreateAPIView):
     """
-    View para listar e contratar serviços (apenas serviços do usuário logado).
+    View para listar e contratar serviços (apenas do usuário logado).
     ---
     # Swagger/DRF-YASG Documentation
     get:
       summary: Lista os serviços contratados pelo usuário.
-      description: Retorna os serviços associados ao usuário logado.
+      description: |
+        Retorna uma lista dos serviços contratados pelo usuário logado.
+        **Apenas o usuário logado pode ver seus próprios serviços.**
       responses:
         200:
           description: Lista de serviços do usuário.
+          examples:
+            [
+              {
+                "id": 1,
+                "usuario_id": 1,
+                "servico": {
+                  "id": 1,
+                  "nome": "Análise de Dados",
+                  "descricao": "Serviço de análise de dados avançada.",
+                  "preco": "100.00",
+                  "ativo": true
+                },
+                "data_contratacao": "2026-05-19T12:00:00Z",
+                "ativo": true
+              }
+            ]
+        401:
+          description: Não autorizado (token inválido ou ausente).
 
     post:
       summary: Contrata um novo serviço.
-      description: Associa um serviço ao usuário logado. Apenas o ID do serviço é necessário.
+      description: |
+        Associa um serviço ao usuário logado.
+        **Apenas o ID do serviço é necessário.**
       requestBody:
         required: true
         content:
@@ -289,9 +344,11 @@ class UsuarioServicoListCreateView(generics.ListCreateAPIView):
           description: Serviço contratado com sucesso.
         400:
           description: Dados inválidos (ex.: servico_id não existe).
+        401:
+          description: Não autorizado (token inválido ou ausente).
     """
     serializer_class = UsuarioServicoSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated]  # Apenas usuários logados
 
     def get_queryset(self):
         """
@@ -299,27 +356,26 @@ class UsuarioServicoListCreateView(generics.ListCreateAPIView):
         """
         return UsuarioServico.objects.filter(usuario=self.request.user)
 
-    def get_serializer_context(self):
-        """
-        Adiciona o request ao contexto do serializer.
-        """
-        context = super().get_serializer_context()
-        context['request'] = self.request
-        return context
-
     def perform_create(self, serializer):
         """
         Define o usuário automaticamente como o usuário logado.
+        ---
+        # Fluxo:
+        1. O serializer já valida o `servico_id`.
+        2. A view define o `usuario` como o usuário logado.
         """
         serializer.save(usuario=self.request.user)
 
 class UsuarioServicoRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
     """
-    View para recuperar, atualizar e deletar serviços do usuário (apenas do usuário logado).
+    View para recuperar, atualizar e deletar serviços do usuário.
     ---
     # Swagger/DRF-YASG Documentation
     get:
       summary: Recupera um serviço contratado pelo ID.
+      description: |
+        Retorna os detalhes de um serviço contratado pelo usuário logado.
+        **Apenas o usuário logado pode ver seus próprios serviços.**
       responses:
         200:
           description: Serviço encontrado.
@@ -328,6 +384,9 @@ class UsuarioServicoRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIV
 
     put:
       summary: Atualiza um serviço contratado.
+      description: |
+        Atualiza os dados de um serviço contratado.
+        **Apenas o usuário logado pode editar seus próprios serviços.**
       responses:
         200:
           description: Serviço atualizado com sucesso.
@@ -336,6 +395,9 @@ class UsuarioServicoRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIV
 
     delete:
       summary: Deleta um serviço contratado.
+      description: |
+        Remove um serviço contratado do usuário.
+        **Apenas o usuário logado pode deletar seus próprios serviços.**
       responses:
         204:
           description: Serviço deletado com sucesso.

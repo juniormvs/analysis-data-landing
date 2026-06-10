@@ -1,76 +1,93 @@
+# =============================================
+# SERIALIZERS DO DJANGO REST FRAMEWORK
+# =============================================
+# Define como os dados são serializados/deserializados para a API.
+# Cada serializer corresponde a um modelo e define:
+# - Quais campos são incluídos nas respostas (GET).
+# - Quais campos são obrigatórios nas requisições (POST/PUT).
+# - Validações personalizadas.
+# =============================================
 
-# from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework import serializers
+from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
-from .models import Cliente, Servico, UsuarioServico
+from .models import Servico, UsuarioServico
 
 # =============================================
 # SERIALIZERS DE MODELOS (CRUD)
 # =============================================
 
-class ClienteSerializer(serializers.ModelSerializer):
-    """
-    Serializer para o modelo Cliente.
-    Usa todos os campos do modelo (fields = '__all__').
-    Ideal para operações CRUD básicas.
-    """
-    class Meta:
-        model = Cliente
-        fields = '__all__'  # Inclui todos os campos do modelo Cliente
-
 class ServicoSerializer(serializers.ModelSerializer):
     """
     Serializer para o modelo Servico.
-    Usa todos os campos do modelo (fields = '__all__').
-    Permite listar, criar, editar e deletar serviços (com permissões de admin).
+    ---
+    # Campos serializados:
+    - id: ID do serviço (somente leitura).
+    - nome: Nome do serviço.
+    - descricao: Descrição do serviço.
+    - preco: Preço do serviço (formato: R$ 00.00).
+    - ativo: Indica se o serviço está ativo.
+    ---
+    # Uso:
+    - Listar serviços (GET /api/servicos/).
+    - Criar/atualizar serviços (POST/PUT /api/servicos/).
     """
     class Meta:
         model = Servico
-        fields = '__all__'  # Inclui todos os campos do modelo Servico
+        fields = ['id', 'nome', 'descricao', 'preco', 'ativo']
+        read_only_fields = ['id']  # ID é gerado automaticamente
 
 # =============================================
-# SERIALIZER DE USUÁRIO-SERVIÇO (RELAÇÃO N:1)
+# SERIALIZER DE USUÁRIO-SERVIÇO (RELAÇÃO N:M)
 # =============================================
 
 class UsuarioServicoSerializer(serializers.ModelSerializer):
-    # Campo para leitura: retorna o objeto Servico completo
+    """
+    Serializer para o modelo UsuarioServico.
+    ---
+    # Campos serializados:
+    - id: ID do relacionamento (somente leitura).
+    - usuario_id: ID do usuário (somente leitura, definido automaticamente).
+    - servico: Objeto Servico completo (somente leitura, aninhado).
+    - servico_id: ID do serviço (somente escrita, usado para contratar).
+    - data_contratacao: Data de contratação (somente leitura).
+    - ativo: Indica se o serviço está ativo para o usuário.
+    ---
+    # Regras:
+    - Ao criar (POST), recebe apenas `servico_id`.
+    - Ao listar (GET), retorna o objeto `servico` completo.
+    """
+    # Campo para leitura: retorna o objeto Servico completo (aninhado)
     servico = ServicoSerializer(read_only=True)
 
     # Campo para escrita: recebe apenas o ID do serviço
     servico_id = serializers.IntegerField(
         write_only=True,
         required=True,
-        help_text="ID do serviço a ser associado ao usuário."
-    )
-
-    # Campo para leitura: retorna o ID do usuário (definido automaticamente na view)
-    usuario = serializers.IntegerField(
-        read_only=True,
-        help_text="ID do usuário (definido automaticamente pelo sistema)."
+        help_text="ID do serviço a ser contratado."
     )
 
     class Meta:
         model = UsuarioServico
-        fields = ['id', 'usuario', 'servico', 'servico_id', 'data_contratacao', 'data_expiracao', 'ativo']
+        fields = ['id', 'usuario_id', 'servico', 'servico_id', 'data_contratacao', 'ativo']
+        read_only_fields = ['id', 'usuario_id', 'data_contratacao', 'servico']
 
     def create(self, validated_data):
         """
         Método personalizado para criar um UsuarioServico.
-        - Recebe o ID do serviço via `servico_id`.
-        - Associa o serviço ao usuário (definido na view).
+        ---
+        # Fluxo:
+        1. Obtém o serviço pelo ID (`servico_id`).
+        2. Cria o relacionamento entre o usuário (definido na view) e o serviço.
+        3. Retorna o objeto criado.
         """
-        # Obtém o serviço pelo ID
         servico = Servico.objects.get(id=validated_data.pop('servico_id'))
-
-        # Cria o UsuarioServico com o serviço e o usuário (definido na view)
         usuario_servico = UsuarioServico.objects.create(
             servico=servico,
             **validated_data
         )
         return usuario_servico
-
-
 
 # =============================================
 # SERIALIZERS DE AUTENTICAÇÃO (REGISTRO E LOGIN)
@@ -79,9 +96,17 @@ class UsuarioServicoSerializer(serializers.ModelSerializer):
 class UserRegisterSerializer(serializers.ModelSerializer):
     """
     Serializer para registro de novos usuários.
-    - Valida se as senhas coincidem (password vs password2).
-    - Cria o usuário com email como username (para autenticação).
-    - Campos obrigatórios: first_name, last_name, email, password, password2.
+    ---
+    # Campos:
+    - first_name: Primeiro nome (obrigatório).
+    - last_name: Sobrenome (obrigatório).
+    - email: Email do usuário (obrigatório, usado como username).
+    - password: Senha (obrigatório, mínimo 8 caracteres).
+    - password2: Confirmação da senha (obrigatório, deve ser igual a password).
+    ---
+    # Validações:
+    - Verifica se as senhas coincidem.
+    - Cria o usuário com o email como username.
     """
     password = serializers.CharField(
         write_only=True,
@@ -93,7 +118,7 @@ class UserRegisterSerializer(serializers.ModelSerializer):
         write_only=True,
         required=True,
         style={'input_type': 'password'},
-        help_text="Confirmação da senha."
+        help_text="Confirmação da senha (deve ser igual à senha)."
     )
     first_name = serializers.CharField(
         required=True,
@@ -105,7 +130,7 @@ class UserRegisterSerializer(serializers.ModelSerializer):
     )
 
     class Meta:
-        model = User  # Usa o modelo padrão do Django
+        model = User
         fields = ('first_name', 'last_name', 'email', 'password', 'password2')
         extra_kwargs = {
             'email': {
@@ -117,6 +142,10 @@ class UserRegisterSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         """
         Valida se as senhas coincidem.
+        ---
+        # Regras:
+        - `password` e `password2` devem ser iguais.
+        - Se não forem, levanta um erro de validação.
         """
         if attrs['password'] != attrs['password2']:
             raise serializers.ValidationError(
@@ -127,8 +156,11 @@ class UserRegisterSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         """
         Cria um novo usuário no banco de dados.
-        - Remove o campo password2 (não é necessário salvá-lo).
-        - Usa o email como username (para autenticação).
+        ---
+        # Fluxo:
+        1. Remove o campo `password2` (não é necessário salvá-lo).
+        2. Usa o email como username (para autenticação).
+        3. Cria o usuário com os dados validados.
         """
         validated_data.pop('password2')  # Remove o campo de confirmação
         user = User.objects.create_user(
@@ -143,8 +175,14 @@ class UserRegisterSerializer(serializers.ModelSerializer):
 class UserLoginSerializer(serializers.Serializer):
     """
     Serializer para login de usuários.
-    - Autentica o usuário pelo email (usado como username).
-    - Retorna o usuário autenticado para geração do token JWT.
+    ---
+    # Campos:
+    - email: Email do usuário (usado como username).
+    - password: Senha do usuário.
+    ---
+    # Validações:
+    - Autentica o usuário pelo email (username=email).
+    - Retorna o usuário autenticado ou levanta um erro.
     """
     email = serializers.CharField(
         help_text="Email do usuário (usado como username)."
@@ -158,8 +196,11 @@ class UserLoginSerializer(serializers.Serializer):
     def validate(self, attrs):
         """
         Valida as credenciais do usuário.
-        - Usa o email como username para autenticação.
-        - Retorna o usuário autenticado ou levanta um erro.
+        ---
+        # Fluxo:
+        1. Obtém email e senha da requisição.
+        2. Autentica o usuário pelo email (username=email).
+        3. Se o usuário não for encontrado, levanta um erro.
         """
         email = attrs.get('email')
         password = attrs.get('password')
