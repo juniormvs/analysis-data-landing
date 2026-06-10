@@ -82,7 +82,8 @@ SIMPLE_JWT = {
 }
 
 # Configuração do modelo de usuário
-AUTH_USER_MODEL = 'auth.User'  # <-- Mudei para 'auth.User' (modelo padrão do Django)
+# Usar o modelo padrão do Django (auth.User)
+AUTH_USER_MODEL = 'auth.User'
 
 ROOT_URLCONF = 'config.urls'
 

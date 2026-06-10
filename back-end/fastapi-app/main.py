@@ -1,4 +1,5 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, APIRouter, HTTPException, Depends
+from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, Column, Integer, String, Text, text, DateTime
 from sqlalchemy.ext.declarative import declarative_base
@@ -8,21 +9,12 @@ import re
 import os
 from dotenv import load_dotenv
 from typing import Optional
-from datetime import datetime as dt
+from datetime import datetime, timezone
+import time
+from sqlalchemy.exc import OperationalError
 
-# Carrega as variáveis de ambiente
+# Carrega variáveis de ambiente
 load_dotenv()
-
-# Configuração do CORS (para o front-end React)
-app = FastAPI()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 # Configuração do banco de dados (PostgreSQL)
 DB_USER = os.getenv("DB_USER", "postgres")
@@ -31,17 +23,25 @@ DB_HOST = os.getenv("DB_HOST", "db")
 DB_PORT = os.getenv("DB_PORT", "5432")
 DB_NAME = os.getenv("DB_NAME", "analysisdata")
 
-# URL de conexão com o PostgreSQL
 DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
-# Cria o engine do SQLAlchemy
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+# Cria engine com retry para evitar erro de inicialização
+for i in range(10):
+    try:
+        engine = create_engine(DATABASE_URL)
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        break
+    except OperationalError:
+        print("Banco ainda não está pronto, tentando novamente...")
+        time.sleep(5)
+else:
+    raise RuntimeError("Não foi possível conectar ao banco após várias tentativas")
 
-# Base para os modelos
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-# Modelo para o formulário de contato (APENAS UMA DEFINIÇÃO!)
+# Modelo de contato
 class Contato(Base):
     __tablename__ = "app_contato"
     id = Column(Integer, primary_key=True, index=True)
@@ -49,15 +49,10 @@ class Contato(Base):
     email = Column(String(100), nullable=False)
     telefone = Column(String(20), nullable=True)
     mensagem = Column(Text, nullable=False)
-    criado_em = Column(DateTime, default=dt.utcnow, index=True)
-    status = Column(String(20), default="Pendente")  # Campo adicionado aqui
+    criado_em = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    status = Column(String(20), default="Pendente")
 
-# Cria as tabelas automaticamente
-@app.on_event("startup")
-def startup():
-    Base.metadata.create_all(bind=engine)
-
-# Dependência para obter a sessão do banco
+# Dependência para sessão
 def get_db():
     db = SessionLocal()
     try:
@@ -65,7 +60,7 @@ def get_db():
     finally:
         db.close()
 
-# Pydantic model para validação dos dados do formulário
+# Pydantic models
 class ContatoCreate(BaseModel):
     nome: str
     email: EmailStr
@@ -84,7 +79,6 @@ class ContatoCreate(BaseModel):
             raise ValueError('A mensagem deve ter pelo menos 10 caracteres')
         return v
 
-# Pydantic model para atualização de contato
 class ContatoUpdate(BaseModel):
     nome: Optional[str] = None
     email: Optional[EmailStr] = None
@@ -104,24 +98,41 @@ class ContatoUpdate(BaseModel):
             raise ValueError('Status deve ser: Pendente, Respondido, Arquivado ou Em Andamento')
         return v
 
-# Endpoint de teste para verificar a conexão com o banco
-@app.get("/test-db/")
+# Router com prefixo /api
+router = APIRouter(prefix="/api")
+
+# Ciclo de vida para criar tabelas
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    Base.metadata.create_all(bind=engine)
+    yield
+
+# App principal
+app = FastAPI(lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Endpoints
+@router.get("/test-db/")
 async def test_db():
     try:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
-            conn.close()
         return {"message": "Conexão com o PostgreSQL funcionando!"}
     except Exception:
         raise HTTPException(status_code=500, detail="Erro ao conectar ao banco")
 
-# Endpoint padrão
-@app.get("/")
+@router.get("/")
 async def root():
     return {"message": "FastAPI funcionando!"}
 
-# Endpoint para receber dados do formulário de contato
-@app.post("/api/contato/")
+@router.post("/contato/")
 async def criar_contato(contato: ContatoCreate, db: Session = Depends(get_db)):
     try:
         db_contato = Contato(
@@ -129,123 +140,74 @@ async def criar_contato(contato: ContatoCreate, db: Session = Depends(get_db)):
             email=contato.email,
             telefone=contato.telefone,
             mensagem=contato.mensagem,
-            criado_em=dt.utcnow()
+            criado_em=datetime.now(timezone.utc)
         )
         db.add(db_contato)
         db.commit()
         db.refresh(db_contato)
-        return {"message": "Mensagem recebida com sucesso! Entraremos em contato em breve.", "id": db_contato.id}
+        return {"message": "Mensagem recebida com sucesso!", "id": db_contato.id}
     except Exception as e:
         db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Ocorreu um erro ao processar sua solicitação. Tente novamente mais tarde.{str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Erro ao processar: {str(e)}")
 
-# Endpoint para listar contatos
-@app.get("/api/contatos/")
+@router.get("/contatos/")
 async def listar_contatos(db: Session = Depends(get_db)):
-    try:
-        contatos = db.query(Contato).order_by(Contato.criado_em.desc()).all()
-        return {
-            "contatos": [
-                {
-                    "id": contato.id,
-                    "nome": contato.nome,
-                    "email": contato.email,
-                    "telefone": contato.telefone,
-                    "mensagem": contato.mensagem,
-                    "status": contato.status,
-                    "criado_em": contato.criado_em.isoformat()
-                } for contato in contatos
-            ]
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Ocorreu um erro ao listar os contatos.{str(e)}"
-        )
+    contatos = db.query(Contato).order_by(Contato.criado_em.desc()).all()
+    return {"contatos": [
+        {
+            "id": c.id,
+            "nome": c.nome,
+            "email": c.email,
+            "telefone": c.telefone,
+            "mensagem": c.mensagem,
+            "status": c.status,
+            "criado_em": c.criado_em.isoformat()
+        } for c in contatos
+    ]}
 
-# Endpoint para buscar um contato específico
-@app.get("/api/contatos/{contato_id}/")
+@router.get("/contatos/{contato_id}/")
 async def buscar_contato(contato_id: int, db: Session = Depends(get_db)):
-    try:
-        contato = db.query(Contato).filter(Contato.id == contato_id).first()
-        if not contato:
-            raise HTTPException(status_code=404, detail="Contato não encontrado")
-        return {
-            "id": contato.id,
-            "nome": contato.nome,
-            "email": contato.email,
-            "telefone": contato.telefone,
-            "mensagem": contato.mensagem,
-            "status": contato.status,
-            "criado_em": contato.criado_em.isoformat()
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Ocorreu um erro ao buscar o contato. {str(e)}"
-        )
+    contato = db.query(Contato).filter(Contato.id == contato_id).first()
+    if not contato:
+        raise HTTPException(status_code=404, detail="Contato não encontrado")
+    return {
+        "id": contato.id,
+        "nome": contato.nome,
+        "email": contato.email,
+        "telefone": contato.telefone,
+        "mensagem": contato.mensagem,
+        "status": contato.status,
+        "criado_em": contato.criado_em.isoformat()
+    }
 
-# Endpoint para atualizar um contato (PATCH)
-@app.patch("/api/contatos/{contato_id}/")
-async def atualizar_contato(
-    contato_id: int,
-    contato_update: ContatoUpdate,
-    db: Session = Depends(get_db)
-):
-    try:
-        db_contato = db.query(Contato).filter(Contato.id == contato_id).first()
-        if not db_contato:
-            raise HTTPException(status_code=404, detail="Contato não encontrado")
+@router.patch("/contatos/{contato_id}/")
+async def atualizar_contato(contato_id: int, contato_update: ContatoUpdate, db: Session = Depends(get_db)):
+    db_contato = db.query(Contato).filter(Contato.id == contato_id).first()
+    if not db_contato:
+        raise HTTPException(status_code=404, detail="Contato não encontrado")
 
-        if contato_update.nome is not None:
-            db_contato.nome = contato_update.nome
-        if contato_update.email is not None:
-            db_contato.email = contato_update.email
-        if contato_update.telefone is not None:
-            db_contato.telefone = contato_update.telefone
-        if contato_update.mensagem is not None:
-            db_contato.mensagem = contato_update.mensagem
-        if contato_update.status is not None:
-            db_contato.status = contato_update.status
+    for campo, valor in contato_update.dict(exclude_unset=True).items():
+        setattr(db_contato, campo, valor)
 
-        db.commit()
-        db.refresh(db_contato)
+    db.commit()
+    db.refresh(db_contato)
+    return {"message": "Contato atualizado com sucesso!", "contato": {
+        "id": db_contato.id,
+        "nome": db_contato.nome,
+        "email": db_contato.email,
+        "telefone": db_contato.telefone,
+        "mensagem": db_contato.mensagem,
+        "status": db_contato.status,
+        "criado_em": db_contato.criado_em.isoformat()
+    }}
 
-        return {
-            "message": "Contato atualizado com sucesso!",
-            "contato": {
-                "id": db_contato.id,
-                "nome": db_contato.nome,
-                "email": db_contato.email,
-                "telefone": db_contato.telefone,
-                "mensagem": db_contato.mensagem,
-                "status": db_contato.status,
-                "criado_em": db_contato.criado_em.isoformat()
-            }
-        }
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Ocorreu um erro ao atualizar o contato. {str(e)}"
-        )
-
-# Endpoint para deletar um contato
-@app.delete("/api/contatos/{contato_id}/")
+@router.delete("/contatos/{contato_id}/")
 async def deletar_contato(contato_id: int, db: Session = Depends(get_db)):
-    try:
-        contato = db.query(Contato).filter(Contato.id == contato_id).first()
-        if not contato:
-            raise HTTPException(status_code=404, detail="Contato não encontrado")
-        db.delete(contato)
-        db.commit()
-        return {"message": "Contato deletado com sucesso!"}
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Ocorreu um erro ao deletar o contato: {str(e)}"
-        )
+    contato = db.query(Contato).filter(Contato.id == contato_id).first()
+    if not contato:
+        raise HTTPException(status_code=404, detail="Contato não encontrado")
+    db.delete(contato)
+    db.commit()
+    return {"message": "Contato deletado com sucesso!"}
+
+app.include_router(router)
