@@ -1,4 +1,3 @@
-version: '3.8'
 
 services:
   db:
@@ -72,18 +71,20 @@ services:
     restart: unless-stopped
 
   frontend:
-    build: ./front-end
+    build:
+      context: ./front-end
+      dockerfile: Dockerfile
     container_name: analysis-data-frontend
     command: npm start -- --host 0.0.0.0
     volumes:
       - ./front-end:/app
       - /app/node_modules
     environment:
-      NODE_ENV: development
+      NODE_ENV: production
       HOST: 0.0.0.0
       PORT: 3000
-    ports:
-      - "3000:3000"
+    expose:
+      - "3000"
     user: "1000:1000"   # UID:GID do seu usuário local
     restart: unless-stopped
 
